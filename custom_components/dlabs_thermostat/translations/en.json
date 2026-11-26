@@ -1,0 +1,323 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "What to control",
+        "description": "Pick your real thermostat and the rooms to blend. Each room counts equally to start. Weights, live weights and backup sensors are set per room later on the Homedial page (\"+ Add room\" adds more). Homedial starts Off and changes nothing until you set it to Cool or Heat.",
+        "data": {
+          "underlying_climate": "Your thermostat",
+          "rooms": "Room temperature sensors",
+          "protected_room": "Protected room (optional)"
+        },
+        "data_description": {
+          "underlying_climate": "The real thermostat Homedial sends setpoints to. Homedial itself isn't listed, and each thermostat can have only one Homedial.",
+          "rooms": "Blended into one control temperature. A dead sensor is left out, never counted as zero. Only sensors with device class Temperature are listed; if yours is missing, set its device class in its settings or template.",
+          "protected_room": "A room that must not get too cold, e.g. a nursery. It is kept at or above the floor on the next screen."
+        }
+      },
+      "control": {
+        "title": "Safety limits",
+        "description": "Defaults are safe starting points. Every value can be changed later under Configure.",
+        "data": {
+          "freeze_limit": "Freeze limit",
+          "overheat_limit": "Overheat limit",
+          "protected_floor_enabled": "Use a protected room floor",
+          "protected_floor": "Protected room floor",
+          "control_underlying_mode": "Control the thermostat's mode",
+          "humidity": "Humidity help",
+          "advanced": "Advanced"
+        },
+        "data_description": {
+          "freeze_limit": "If any room is at or below this, cooling is blocked.",
+          "overheat_limit": "If any room is at or above this, heating is blocked.",
+          "protected_floor_enabled": "Cool only: keep the protected room at or above the floor while cooling. Homedial raises the cooling setpoint when that room gets close. It does not protect the room in Heat.",
+          "protected_floor": "Lowest temperature allowed in the protected room.",
+          "control_underlying_mode": "When Homedial is set to Cool or Heat, switch your thermostat to the same mode (including out of auto/heat-cool). Turn off if another automation manages its mode."
+        },
+        "sections": {
+          "humidity": {
+            "name": "Humidity help (optional, cool only)",
+            "description": "Lower the cooling setpoint a little when the dew point is high, so the AC runs longer and dries the house.",
+            "data": {
+              "latent_dew_point": "Dew point sensor (optional)",
+              "latent_ceiling": "Humidity help starts above this dew point",
+              "latent_span": "Dew point range to full help",
+              "latent_max_depression": "Most humidity help"
+            },
+            "data_description": {
+              "latent_dew_point": "A DEW POINT sensor (°F or °C), not a humidity % sensor. Turns on humidity help in Cool: the setpoint is lowered a little when the air is humid. Never used in Heat.",
+              "latent_ceiling": "Humidity help starts when the dew point is above this. 53°F (11.5°C) is a comfortable indoor limit.",
+              "latent_span": "Degrees above the start point where the full lowering applies.",
+              "latent_max_depression": "The most the cooling setpoint is lowered for humidity."
+            }
+          },
+          "advanced": {
+            "name": "Advanced (experienced users)",
+            "description": "Fine tuning. The defaults are safe for most homes.",
+            "data": {
+              "setpoint_resolution": "Thermostat step size",
+              "min_write_step": "Smallest change worth sending",
+              "setpoint_clamp": "Largest single setpoint change",
+              "min_write_interval": "Minutes between demand increases",
+              "protected_floor_entity": "Live floor sensor (optional)",
+              "protected_floor_enable_entity": "Floor on/off switch (optional)",
+              "offset_clamp_low": "Floor: most it can lower the setpoint",
+              "offset_clamp_high": "Floor: most it can raise the setpoint",
+              "underlying_offset_entity": "Thermostat reading correction (optional)",
+              "underlying_offset_clamp_low": "Correction lower limit",
+              "underlying_offset_clamp_high": "Correction upper limit"
+            },
+            "data_description": {
+              "setpoint_resolution": "Smallest change your thermostat accepts (usually 0.5 or 1).",
+              "min_write_step": "Never larger than the step size.",
+              "setpoint_clamp": "Big changes are sent in steps of at most this much.",
+              "min_write_interval": "Changes that ask for more heating or cooling wait this long. Changes that ask for less never wait. 0 turns this off.",
+              "protected_floor_entity": "Read the floor from a sensor instead, e.g. a summer/winter value. The number above is the fallback.",
+              "protected_floor_enable_entity": "While this is off, the floor does not apply. If it can't be read, the floor stays on.",
+              "offset_clamp_low": "When the protected room runs warmer than the house average, the floor's setpoint can drop by the difference, but by no more than this.",
+              "offset_clamp_high": "When the protected room runs colder than the house average, Homedial raises the setpoint by the difference, but by no more than this.",
+              "underlying_offset_entity": "Only if your thermostat's own reading differs from the room average. An entity holding (thermostat reading minus control temperature), updated slowly and held, not live. Leave empty unless you know you need it.",
+              "underlying_offset_clamp_low": "Limits how far the correction above can move the setpoint down.",
+              "underlying_offset_clamp_high": "Limits how far the correction above can move the setpoint up."
+            }
+          }
+        }
+      },
+      "trust": {
+        "title": "Sensor trust",
+        "description": "When a sensor stops being believed.",
+        "data": {
+          "stale_sensor_minutes": "Stale after (minutes)",
+          "frozen_minutes": "Frozen after (minutes)"
+        },
+        "data_description": {
+          "stale_sensor_minutes": "A sensor that hasn't reported in this long is ignored.",
+          "frozen_minutes": "A sensor whose value hasn't changed in this long is ignored. Must be longer than 'stale after'."
+        }
+      }
+    },
+    "error": {
+      "no_rooms": "Pick at least one room temperature sensor.",
+      "protected_not_in_rooms": "The protected room must be one of the rooms you picked.",
+      "underlying_is_dlabs": "Pick your real thermostat, not Homedial itself.",
+      "underlying_in_use": "Homedial already controls this thermostat. To add a room, use \"+ Add room\" on the Homedial page.",
+      "dew_point_not_temperature": "Pick a dew point sensor that reports °F or °C. A humidity (%) sensor won't work here.",
+      "min_step_above_resolution": "The smallest change can't be larger than the thermostat's step size.",
+      "clamp_below_resolution": "The largest single setpoint change can't be smaller than the step size.",
+      "offset_clamp_inverted": "The lower limit must be below the upper limit.",
+      "safety_limits_inverted": "The freeze limit must be below the overheat limit.",
+      "latent_exceeds_clamp": "Humidity help can't be more than the largest single setpoint change.",
+      "floor_below_freeze": "The protected floor can't be below the freeze limit.",
+      "frozen_below_stale": "'Frozen after' must be longer than 'stale after'.",
+      "dew_point_is_a_room": "The dew point sensor is also one of your rooms. Pick a separate dew point sensor, or leave it empty."
+    }
+  },
+  "options": {
+    "step": {
+      "thermostat": {
+        "title": "Thermostat",
+        "description": "Switch to a different thermostat, or choose whether Homedial may set its mode. Nothing has to be set up again.",
+        "data": {
+          "underlying_climate": "Your thermostat",
+          "control_underlying_mode": "Control the thermostat's mode"
+        },
+        "data_description": {
+          "underlying_climate": "The real thermostat Homedial sends setpoints to. Homedial itself isn't listed, and each thermostat can have only one Homedial.",
+          "control_underlying_mode": "When Homedial is set to Cool or Heat, switch your thermostat to the same mode (including out of auto/heat-cool). Turn off if another automation manages its mode."
+        }
+      },
+      "safety": {
+        "title": "Safety limits",
+        "description": "Freeze and overheat limits, and the protected room's floor. The protected room itself is chosen on its room item.",
+        "data": {
+          "freeze_limit": "Freeze limit",
+          "overheat_limit": "Overheat limit",
+          "protected_floor_enabled": "Use a protected room floor",
+          "protected_floor": "Protected room floor",
+          "protected_floor_entity": "Live floor sensor (optional)",
+          "protected_floor_enable_entity": "Floor on/off switch (optional)"
+        },
+        "data_description": {
+          "freeze_limit": "If any room is at or below this, cooling is blocked.",
+          "overheat_limit": "If any room is at or above this, heating is blocked.",
+          "protected_floor_enabled": "Cool only: keep the protected room at or above the floor while cooling. Homedial raises the cooling setpoint when that room gets close. It does not protect the room in Heat.",
+          "protected_floor": "Lowest temperature allowed in the protected room.",
+          "protected_floor_entity": "Read the floor from a sensor instead, e.g. a summer/winter value. The number above is the fallback.",
+          "protected_floor_enable_entity": "While this is off, the floor does not apply. If it can't be read, the floor stays on."
+        }
+      },
+      "humidity": {
+        "title": "Humidity help (cool only)",
+        "description": "Lower the cooling setpoint a little when the dew point is high, so the AC runs longer and dries the house.",
+        "data": {
+          "latent_dew_point": "Dew point sensor (optional)",
+          "latent_ceiling": "Humidity help starts above this dew point",
+          "latent_span": "Dew point range to full help",
+          "latent_max_depression": "Most humidity help"
+        },
+        "data_description": {
+          "latent_dew_point": "A DEW POINT sensor (°F or °C), not a humidity % sensor. Turns on humidity help in Cool: the setpoint is lowered a little when the air is humid. Never used in Heat.",
+          "latent_ceiling": "Humidity help starts when the dew point is above this. 53°F (11.5°C) is a comfortable indoor limit.",
+          "latent_span": "Degrees above the start point where the full lowering applies.",
+          "latent_max_depression": "The most the cooling setpoint is lowered for humidity."
+        }
+      },
+      "advanced": {
+        "title": "Advanced",
+        "description": "Fine tuning for experienced users. The defaults are safe for most homes.",
+        "data": {
+          "setpoint_resolution": "Thermostat step size",
+          "min_write_step": "Smallest change worth sending",
+          "setpoint_clamp": "Largest single setpoint change",
+          "min_write_interval": "Minutes between demand increases",
+          "offset_clamp_low": "Floor: most it can lower the setpoint",
+          "offset_clamp_high": "Floor: most it can raise the setpoint",
+          "underlying_offset_entity": "Thermostat reading correction (optional)",
+          "underlying_offset_clamp_low": "Correction lower limit",
+          "underlying_offset_clamp_high": "Correction upper limit",
+          "stale_sensor_minutes": "Stale after (minutes)",
+          "frozen_minutes": "Frozen after (minutes)"
+        },
+        "data_description": {
+          "setpoint_resolution": "Smallest change your thermostat accepts (usually 0.5 or 1).",
+          "min_write_step": "Never larger than the step size.",
+          "setpoint_clamp": "Big changes are sent in steps of at most this much.",
+          "min_write_interval": "Changes that ask for more heating or cooling wait this long. Changes that ask for less never wait. 0 turns this off.",
+          "offset_clamp_low": "When the protected room runs warmer than the house average, the floor's setpoint can drop by the difference, but by no more than this.",
+          "offset_clamp_high": "When the protected room runs colder than the house average, Homedial raises the setpoint by the difference, but by no more than this.",
+          "underlying_offset_entity": "Only if your thermostat's own reading differs from the room average. An entity holding (thermostat reading minus control temperature), updated slowly and held, not live. Leave empty unless you know you need it.",
+          "underlying_offset_clamp_low": "Limits how far the correction above can move the setpoint down.",
+          "underlying_offset_clamp_high": "Limits how far the correction above can move the setpoint up.",
+          "stale_sensor_minutes": "A sensor that hasn't reported in this long is ignored.",
+          "frozen_minutes": "A sensor whose value hasn't changed in this long is ignored. Must be longer than 'stale after'."
+        }
+      },
+      "init": {
+        "title": "Homedial settings",
+        "description": "Rooms are added, edited and removed on the Homedial page (\"+ Add room\"). Pick what to change:",
+        "menu_options": {
+          "thermostat": "Thermostat",
+          "safety": "Safety limits",
+          "humidity": "Humidity help",
+          "advanced": "Advanced (experienced users)"
+        }
+      }
+    },
+    "error": {
+      "underlying_is_dlabs": "Pick your real thermostat, not Homedial itself.",
+      "underlying_in_use": "Homedial already controls this thermostat. To add a room, use \"+ Add room\" on the Homedial page.",
+      "dew_point_not_temperature": "Pick a dew point sensor that reports °F or °C. A humidity (%) sensor won't work here.",
+      "min_step_above_resolution": "The smallest change can't be larger than the thermostat's step size.",
+      "clamp_below_resolution": "The largest single setpoint change can't be smaller than the step size.",
+      "offset_clamp_inverted": "The lower limit must be below the upper limit.",
+      "safety_limits_inverted": "The freeze limit must be below the overheat limit.",
+      "latent_exceeds_clamp": "Humidity help can't be more than the largest single setpoint change.",
+      "floor_below_freeze": "The protected floor can't be below the freeze limit.",
+      "frozen_below_stale": "'Frozen after' must be longer than 'stale after'.",
+      "dew_point_is_a_room": "This sensor is one of your rooms. Pick a separate dew point sensor, or leave it empty."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "guard_blocking": {
+        "name": "Safety guard blocking"
+      },
+      "on_fallback": {
+        "name": "Using fallback sensor"
+      }
+    },
+    "sensor": {
+      "control_temperature": {
+        "name": "Control temperature"
+      },
+      "reason": {
+        "name": "Reason"
+      },
+      "latent_depression": {
+        "name": "Humidity help"
+      }
+    }
+  },
+  "config_subentries": {
+    "room": {
+      "initiate_flow": {
+        "user": "Add room",
+        "reconfigure": "Edit room"
+      },
+      "entry_type": "Room",
+      "step": {
+        "user": {
+          "title": "Add a room",
+          "description": "Pick the room's temperature sensor. That's all most homes need.",
+          "data": {
+            "sensor": "Room temperature sensor",
+            "name": "Room name (optional)",
+            "protected": "Protect this room from getting too cold",
+            "advanced": "Advanced"
+          },
+          "data_description": {
+            "sensor": "The sensor Homedial reads for this room. A dead or stuck sensor is left out, never counted as zero. Only sensors with device class Temperature are listed.",
+            "name": "Shown on the Homedial page. Blank = the sensor's name.",
+            "protected": "For a nursery or a room that runs cold. Homedial keeps this room at or above the floor set under Configure > Safety limits (\"Use a protected room floor\" must be on). Only one room can be protected."
+          },
+          "sections": {
+            "advanced": {
+              "name": "Advanced (optional)",
+              "description": "For experienced users. Leave as is for an equal blend.",
+              "data": {
+                "weight": "Weight in the blend",
+                "weight_entity": "Live weight (optional)",
+                "backup_sensor": "Backup sensor (optional)"
+              },
+              "data_description": {
+                "weight": "1 = equal. 2 counts this room twice as much as a room at 1.",
+                "weight_entity": "An input number or sensor that sets this room's weight live, e.g. lower at night. 0 leaves the room out of the blend while it reads 0. If it can't be read, the weight above is used.",
+                "backup_sensor": "Read when this room's own sensor is dead or stuck, so the room stays in the blend."
+              }
+            }
+          }
+        },
+        "reconfigure": {
+          "title": "Edit room",
+          "description": "Changes apply right away. Homedial keeps its mode and target.",
+          "data": {
+            "sensor": "Room temperature sensor",
+            "name": "Room name (optional)",
+            "protected": "Protect this room from getting too cold",
+            "advanced": "Advanced"
+          },
+          "data_description": {
+            "sensor": "The sensor Homedial reads for this room. A dead or stuck sensor is left out, never counted as zero. Only sensors with device class Temperature are listed.",
+            "name": "Shown on the Homedial page. Blank = the sensor's name.",
+            "protected": "For a nursery or a room that runs cold. Homedial keeps this room at or above the floor set under Configure > Safety limits (\"Use a protected room floor\" must be on). Only one room can be protected."
+          },
+          "sections": {
+            "advanced": {
+              "name": "Advanced (optional)",
+              "description": "For experienced users. Leave as is for an equal blend.",
+              "data": {
+                "weight": "Weight in the blend",
+                "weight_entity": "Live weight (optional)",
+                "backup_sensor": "Backup sensor (optional)"
+              },
+              "data_description": {
+                "weight": "1 = equal. 2 counts this room twice as much as a room at 1.",
+                "weight_entity": "An input number or sensor that sets this room's weight live, e.g. lower at night. 0 leaves the room out of the blend while it reads 0. If it can't be read, the weight above is used.",
+                "backup_sensor": "Read when this room's own sensor is dead or stuck, so the room stays in the blend."
+              }
+            }
+          }
+        }
+      },
+      "error": {
+        "room_sensor_in_use": "That sensor is already used by another room.",
+        "one_protected_room": "Another room is already protected. Turn protection off there first.",
+        "backup_is_same_sensor": "The backup sensor must be a different sensor.",
+        "dew_point_is_a_room": "This is your dew point sensor (Humidity help), not a room temperature. Pick a room sensor."
+      },
+      "abort": {
+        "reconfigure_successful": "Room updated."
+      }
+    }
+  }
+}

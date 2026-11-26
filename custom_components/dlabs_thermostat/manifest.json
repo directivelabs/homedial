@@ -1,0 +1,13 @@
+{
+  "domain": "dlabs_thermostat",
+  "name": "Homedial",
+  "codeowners": ["@directivelabs/homedial"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/directivelabs/homedial#readme",
+  "integration_type": "helper",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/directivelabs/homedial#report-a-problem",
+  "requirements": [],
+  "version": "1.0.0"
+}

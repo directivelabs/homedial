@@ -1,0 +1,773 @@
+# Homedial extras (package 1.0.0): AUTO heat/cool, blower (fan) timers, and safety alerts.
+# Put this file in config/packages/ (packages must be enabled), then restart Home Assistant.
+# It finds your Homedial by itself; nothing to edit.
+# ONE THERMOSTAT: Auto and the fan timers work with one Homedial. If you have more than one,
+#   they use the one whose entity ID comes first in A-Z order. The safety alert watches all of them.
+#
+# AUTO: keeps Homedial in COOL or HEAT for you around your one target temperature.
+#   - Switches to COOL when the house is <band> degrees ABOVE the target, to HEAT when it is
+#     <band> degrees BELOW. Between the two it leaves the mode alone, so it can't ping-pong.
+#   - Moving the target never flips the mode by itself. Raise the target in COOL (an away or night
+#     setting) and Auto stays in COOL; lower it in HEAT and Auto stays in HEAT. It only flips when
+#     the house itself drifts <band> degrees past the target Auto was last working to. Once the house
+#     reaches the new target, that becomes the target Auto works to.
+#   - At most one switch per <min gap> minutes, unless the house is a further 1 degree out.
+#   - A new verdict must hold for 10 minutes before it acts (one noisy reading can't switch it).
+#   - The band is set in °F (2 to 6). In a °C home it is converted (2 °F = 1.1 °C).
+#   - Picking OFF, COOL or HEAT yourself turns AUTO off (like a normal thermostat).
+#   - Picking OFF also turns your real thermostat off, when Homedial controls its mode (the "Control
+#     the thermostat's mode" option, on by default). So does turning Homedial off anywhere else (its
+#     thermostat card, voice, an automation). With that option off, OFF only turns Homedial off and
+#     your thermostat keeps its own settings.
+#   - Turning AUTO on from OFF keeps COOL or HEAT (your thermostat's own mode, or the one Homedial was
+#     last in) if the house is near target.
+#   - It never changes your target temperature. It only changes the mode.
+#   - With no target temperature on Homedial (for example right after Homedial was added again), Auto turns
+#     itself off and says why. Set a target, then turn Auto on.
+#   - Needs a thermostat that can both heat and cool. Otherwise it reports "not supported" and does nothing.
+# FAN TIMERS: run the thermostat's own fan for 15/30/60/120 minutes, then hand it back to auto.
+#   Works when the real thermostat offers fan modes (most cloud thermostats do). A timer that ran out
+#   while Home Assistant was restarting is handed back to auto when it starts again.
+# SAFETY ALERT (needs Homedial Backdrop): when a safety guard blocks a Homedial that is in COOL or
+#   HEAT for 1 minute (a room too cold while cooling, or too hot while heating), every Homedial page
+#   turns to Alert Mode and the header says why. When the guard has been clear for 5 minutes, it goes
+#   back to Normal. Nothing is raised while Homedial is OFF. It re-checks after a restart and every 5 minutes.
+#   - It only turns on Alert when the house is Normal, and only turns off an alert it turned on itself.
+#     A manual alert is never cleared by Homedial. If a guard trips while your own alert is showing, it
+#     raises its alert once you set Normal (unless the guard has cleared by then).
+#   - Pressing Normal yourself dismisses it; it won't come back until the guard clears and trips again.
+#   - Turn on "Homedial no alert from safety guard" to stop it (this also stands down an alert it raised).
+#   - A thermostat alert message left behind with no thermostat alert showing (for example after a
+#     reinstall) is cleared, so your next manual alert shows its own text. Your own messages are kept.
+
+input_boolean:
+  dlabs_auto_mode:
+    name: Homedial auto heat/cool
+    icon: mdi:thermostat-auto
+  dlabs_safety_alert_off:
+    name: Homedial no alert from safety guard
+    icon: mdi:bell-off
+  dlabs_alert_by_thermostat:
+    # bookkeeping: on while the current alert is one Homedial raised (so it never clears yours)
+    name: Homedial alert raised by thermostat
+    icon: mdi:shield-alert
+  dlabs_alert_dismissed:
+    # bookkeeping: on after a person pressed Normal on a Homedial alert; off again once the guard clears
+    name: Homedial safety alert dismissed
+    icon: mdi:shield-off
+
+input_number:
+  # No `initial:` on purpose: your changes survive restarts. Fresh installs start at the minimum.
+  dlabs_auto_band:
+    name: "Homedial Auto: degrees past the target before switching"
+    icon: mdi:arrow-expand-vertical
+    min: 2
+    max: 6
+    step: 0.5
+    mode: box
+    unit_of_measurement: "°F"
+  dlabs_auto_min_gap:
+    name: "Homedial Auto: least time between switches"
+    icon: mdi:timer-sand
+    min: 120
+    max: 480
+    step: 15
+    mode: box
+    unit_of_measurement: min
+
+input_datetime:
+  dlabs_auto_last_switch:
+    name: Homedial auto last switch
+    has_date: true
+    has_time: true
+
+input_text:
+  dlabs_auto_expected_mode:
+    name: Homedial auto expected mode
+    max: 12
+  dlabs_auto_ref_target:
+    # bookkeeping: the target Auto is working to. A target you move away from it never flips the mode.
+    name: Homedial auto working target
+    max: 12
+  dlabs_auto_reason:
+    name: Homedial auto reason
+    max: 255
+  dlabs_fan_status:
+    name: Homedial fan status
+    max: 120
+
+timer:
+  dlabs_fan_run:
+    name: Homedial fan timer
+    icon: mdi:fan-clock
+    restore: true
+
+template:
+  # Each template below reads now() so it re-checks every minute: on boot the Homedial entity can
+  # load after this sensor, and HA can't watch integration_entities() for changes.
+  # "Band" is the °F setting, converted when the house sensors report °C.
+  - sensor:
+      - name: Homedial auto verdict
+        unique_id: dlabs_auto_verdict
+        default_entity_id: sensor.dlabs_auto_verdict          # keeps the ID the old name gave
+        icon: mdi:thermostat-auto
+        state: >
+          {%- set _minute = now().minute -%}
+          {% set dl = integration_entities('dlabs_thermostat') | select('match', 'climate[.]') | sort | first | default('') %}
+          {% set t = state_attr(dl, 'temperature') %}
+          {% set c = state_attr(dl, 'current_temperature') %}
+          {% set m = states(dl) %}
+          {% set modes = state_attr(dl, 'hvac_modes') or [] %}
+          {% set k = 5 / 9 if state_attr((state_attr(dl, 'rooms') or [''])[0], 'unit_of_measurement') == '°C' else 1 %}
+          {% set band = states('input_number.dlabs_auto_band') | float(2) * k %}
+          {% if dl == '' or t is none or c is none %}blind
+          {% elif 'heat' not in modes or 'cool' not in modes %}unsupported
+          {% else %}
+            {% set t = t | float %}{% set c = c | float %}
+            {% set r = states('input_text.dlabs_auto_ref_target') | float(t) %}
+            {% set lo = [t, r] | min if m == 'cool' else t %}
+            {% set hi = [t, r] | max if m == 'heat' else t %}
+            {% if c >= hi + band %}cool{% elif c <= lo - band %}heat{% else %}hold{% endif %}
+          {% endif %}
+        attributes:
+          dlabs_entity: >
+            {%- set _minute = now().minute -%}
+            {{ integration_entities('dlabs_thermostat') | select('match', 'climate[.]') | sort | first | default('') }}
+          dlabs_mode: >
+            {%- set _minute = now().minute -%}
+            {{ states(integration_entities('dlabs_thermostat') | select('match', 'climate[.]') | sort | first | default('')) }}
+          band: >
+            {%- set _minute = now().minute -%}
+            {% set dl = integration_entities('dlabs_thermostat') | select('match', 'climate[.]') | sort | first | default('') %}
+            {% set k = 5 / 9 if state_attr((state_attr(dl, 'rooms') or [''])[0], 'unit_of_measurement') == '°C' else 1 %}
+            {{ (states('input_number.dlabs_auto_band') | float(2) * k) | round(2) }}
+          urgent: >
+            {%- set _minute = now().minute -%}
+            {% set dl = integration_entities('dlabs_thermostat') | select('match', 'climate[.]') | sort | first | default('') %}
+            {% set t = state_attr(dl, 'temperature') %}
+            {% set c = state_attr(dl, 'current_temperature') %}
+            {% set m = states(dl) %}
+            {% set k = 5 / 9 if state_attr((state_attr(dl, 'rooms') or [''])[0], 'unit_of_measurement') == '°C' else 1 %}
+            {% set band = states('input_number.dlabs_auto_band') | float(2) * k %}
+            {% if t is none or c is none %}false{% else %}
+              {% set t = t | float %}{% set c = c | float %}
+              {% set r = states('input_text.dlabs_auto_ref_target') | float(t) %}
+              {% set lo = [t, r] | min if m == 'cool' else t %}
+              {% set hi = [t, r] | max if m == 'heat' else t %}
+              {{ c >= hi + band + k or c <= lo - band - k }}
+            {% endif %}
+          ref_heal: >
+            {%- set _minute = now().minute -%}
+            {% set dl = integration_entities('dlabs_thermostat') | select('match', 'climate[.]') | sort | first | default('') %}
+            {% set t = state_attr(dl, 'temperature') %}
+            {% set c = state_attr(dl, 'current_temperature') %}
+            {% set m = states(dl) %}
+            {% set r = states('input_text.dlabs_auto_ref_target') %}
+            {% if t is none or c is none or m not in ['cool', 'heat'] %}false
+            {% elif r | float(none) is none %}true
+            {% else %}{{ r | float != t | float and ((m == 'cool' and c | float >= t | float) or (m == 'heat' and c | float <= t | float)) }}{% endif %}
+          explain: >
+            {%- set _minute = now().minute -%}
+            {% set dl = integration_entities('dlabs_thermostat') | select('match', 'climate[.]') | sort | first | default('') %}
+            {% set t = state_attr(dl, 'temperature') %}
+            {% set c = state_attr(dl, 'current_temperature') %}
+            {% set m = states(dl) %}
+            {% set modes = state_attr(dl, 'hvac_modes') or [] %}
+            {% set k = 5 / 9 if state_attr((state_attr(dl, 'rooms') or [''])[0], 'unit_of_measurement') == '°C' else 1 %}
+            {% set band = states('input_number.dlabs_auto_band') | float(2) * k %}
+            {% if dl == '' %}No Homedial found.
+            {% elif t is none %}Homedial has no target yet.
+            {% elif c is none %}Homedial has no house temperature right now.
+            {% elif 'heat' not in modes or 'cool' not in modes %}{% set u = state_attr(dl, 'underlying') %}Auto needs a thermostat that can both heat and cool. {{ state_attr(u, 'friendly_name') or 'This thermostat' }} can only {{ 'cool' if 'cool' in modes else 'heat' }}, so Auto stays off.
+            {% else %}
+              {% set t = t | float %}{% set c = c | float %}
+              {% set r = states('input_text.dlabs_auto_ref_target') | float(t) %}
+              {% set lo = [t, r] | min if m == 'cool' else t %}
+              {% set hi = [t, r] | max if m == 'heat' else t %}
+              {% set d = c - t %}
+              {% if c >= hi + band and hi > t %}The house ({{ '%g' % (c | round(1)) }}°) is {{ '%g' % ((c - hi) | round(1)) }}° above the {{ '%g' % (hi | round(1)) }}° target Auto was heating to: time to cool.
+              {% elif c >= hi + band %}The house ({{ '%g' % (c | round(1)) }}°) is {{ '%g' % (d | round(1)) }}° above the target ({{ '%g' % (t | round(1)) }}°): time to cool.
+              {% elif c <= lo - band and lo < t %}The house ({{ '%g' % (c | round(1)) }}°) is {{ '%g' % ((lo - c) | round(1)) }}° below the {{ '%g' % (lo | round(1)) }}° target Auto was cooling to: time to heat.
+              {% elif c <= lo - band %}The house ({{ '%g' % (c | round(1)) }}°) is {{ '%g' % ((-d) | round(1)) }}° below the target ({{ '%g' % (t | round(1)) }}°): time to heat.
+              {% elif d <= -band %}The house ({{ '%g' % (c | round(1)) }}°) is below the target ({{ '%g' % (t | round(1)) }}°) because the target went up. Staying on cooling unless the house drops to {{ '%g' % ((lo - band) | round(1)) }}°.
+              {% elif d >= band %}The house ({{ '%g' % (c | round(1)) }}°) is above the target ({{ '%g' % (t | round(1)) }}°) because the target went down. Staying on heating unless the house reaches {{ '%g' % ((hi + band) | round(1)) }}°.
+              {% else %}The house ({{ '%g' % (c | round(1)) }}°) is within {{ '%g' % (band | round(1)) }}° of the target ({{ '%g' % (t | round(1)) }}°): no change.{% endif %}
+            {% endif %}
+
+  # The safety alert watches every Homedial, but only while it is in COOL or HEAT.
+  # delay_on / delay_off: blocked for 1 minute to raise, clear for 5 minutes to stand down.
+  # Its state is restored after a restart, so an alert never gets stuck or lost.
+  # The name is a template so it renders after HA restores the last state (a plain name would keep the old one).
+  - binary_sensor:
+      - name: "{{ 'Homedial safety guard blocking' }}"
+        unique_id: dlabs_safety_guard_blocking
+        default_entity_id: binary_sensor.dlabs_safety_guard_blocking
+        icon: mdi:shield-alert
+        delay_on: "00:01:00"
+        delay_off: "00:05:00"
+        availability: >
+          {%- set _minute = now().minute -%}
+          {{ integration_entities('dlabs_thermostat') | select('match', 'climate[.]') | reject('is_state', ['unknown', 'unavailable']) | list | count > 0 }}
+        state: >
+          {%- set _minute = now().minute -%}
+          {{ integration_entities('dlabs_thermostat') | select('match', 'climate[.]') | select('is_state', ['cool', 'heat']) | select('is_state_attr', 'blocked_by_guard', true) | list | count > 0 }}
+        attributes:
+          dlabs_entity: >
+            {%- set _minute = now().minute -%}
+            {% set all = integration_entities('dlabs_thermostat') | select('match', 'climate[.]') | sort | list %}
+            {{ (all | select('is_state', ['cool', 'heat']) | select('is_state_attr', 'blocked_by_guard', true) | list + all) | first | default('') }}
+
+script:
+  dlabs_mode_pick:
+    alias: Homedial pick a mode
+    icon: mdi:thermostat
+    description: >-
+      OFF / COOL / HEAT turn auto off and set the mode. OFF also turns the real thermostat off when
+      Homedial controls its mode. AUTO turns auto on.
+    mode: queued
+    fields:
+      mode:
+        description: off, cool, heat or auto
+        example: cool
+    sequence:
+      - variables:
+          dl: "{{ integration_entities('dlabs_thermostat') | select('match', 'climate[.]') | sort | first | default('') }}"
+          under: "{{ state_attr(dl, 'underlying') or '' }}"
+      - condition: template
+        value_template: "{{ dl != '' and mode in ['off', 'cool', 'heat', 'auto'] }}"
+      - if:
+          - condition: template
+            value_template: "{{ mode == 'auto' }}"
+        then:
+          - action: input_boolean.turn_on
+            target:
+              entity_id: input_boolean.dlabs_auto_mode
+        else:
+          - action: input_boolean.turn_off
+            target:
+              entity_id: input_boolean.dlabs_auto_mode
+          - action: input_text.set_value
+            target:
+              entity_id: input_text.dlabs_auto_expected_mode
+            data:
+              value: "{{ mode }}"
+          - action: input_text.set_value
+            target:
+              entity_id: input_text.dlabs_auto_ref_target
+            data:
+              value: ""
+          - action: input_text.set_value
+            target:
+              entity_id: input_text.dlabs_auto_reason
+            data:
+              value: "Auto heat/cool is off: you picked {{ {'cool': 'cooling', 'heat': 'heating'}.get(mode, mode | replace('_', ' ')) }}."
+          - action: climate.set_hvac_mode
+            target:
+              entity_id: "{{ dl }}"
+            data:
+              hvac_mode: "{{ mode }}"
+          # OFF means off: Homedial is disarmed first (so it can't switch the system back on), then the
+          # real thermostat, but only when Homedial controls its mode and it offers OFF.
+          - if:
+              - condition: template
+                value_template: >
+                  {{ mode == 'off' and under != '' and state_attr(dl, 'control_underlying_mode') != false
+                     and 'off' in (state_attr(under, 'hvac_modes') or []) and not is_state(under, 'off') }}
+            then:
+              - action: climate.set_hvac_mode
+                target:
+                  entity_id: "{{ under }}"
+                data:
+                  hvac_mode: "off"
+
+  dlabs_auto_apply:
+    alias: Homedial auto apply a mode
+    icon: mdi:thermostat-auto
+    mode: queued
+    fields:
+      mode:
+        example: cool
+      why:
+        example: House is 2.0 degrees above target
+    sequence:
+      - variables:
+          dl: "{{ integration_entities('dlabs_thermostat') | select('match', 'climate[.]') | sort | first | default('') }}"
+      # a queued run must not act after a person turned Auto off
+      - condition: state
+        entity_id: input_boolean.dlabs_auto_mode
+        state: "on"
+      - condition: template
+        value_template: "{{ dl != '' and mode in ['cool', 'heat'] }}"
+      # expected mode first, so the manual-change check never mistakes this for a person
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.dlabs_auto_expected_mode
+        data:
+          value: "{{ mode }}"
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.dlabs_auto_ref_target
+        data:
+          value: "{{ state_attr(dl, 'temperature') if state_attr(dl, 'temperature') is not none else '' }}"
+      - action: climate.set_hvac_mode
+        target:
+          entity_id: "{{ dl }}"
+        data:
+          hvac_mode: "{{ mode }}"
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.dlabs_auto_last_switch
+        data:
+          timestamp: "{{ now().timestamp() }}"
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.dlabs_auto_reason
+        data:
+          value: "{{ ('Switched to ' ~ {'cool': 'cooling', 'heat': 'heating'}.get(mode, mode | replace('_', ' ')) ~ ' at ' ~ now().strftime('%-I:%M %p') ~ '. ' ~ why)[:255] }}"
+
+  dlabs_fan_run:
+    alias: Homedial run the fan
+    icon: mdi:fan
+    description: Runs the thermostat fan; 0 minutes = on with no timer.
+    mode: queued
+    fields:
+      minutes:
+        example: 30
+    sequence:
+      - variables:
+          dl: "{{ integration_entities('dlabs_thermostat') | select('match', 'climate[.]') | sort | first | default('') }}"
+          under: "{{ state_attr(dl, 'underlying') or '' }}"
+          fm: "{{ state_attr(under, 'fan_modes') or [] }}"
+          on_mode: >
+            {% set pick = namespace(v='') %}
+            {% for want in ['on', 'high', 'medium', 'low'] %}{% if pick.v == '' %}{% for m in fm %}{% if pick.v == '' and m | lower == want %}{% set pick.v = m %}{% endif %}{% endfor %}{% endif %}{% endfor %}
+            {{ pick.v }}
+          mins: "{{ minutes | int(0) }}"
+      - if:
+          - condition: template
+            value_template: "{{ on_mode == '' }}"
+        then:
+          - action: input_text.set_value
+            target:
+              entity_id: input_text.dlabs_fan_status
+            data:
+              value: This thermostat has no fan control in Home Assistant.
+          - stop: no fan modes
+      - action: climate.set_fan_mode
+        target:
+          entity_id: "{{ under }}"
+        data:
+          fan_mode: "{{ on_mode }}"
+      - if:
+          - condition: template
+            value_template: "{{ mins > 0 }}"
+        then:
+          - action: timer.start
+            target:
+              entity_id: timer.dlabs_fan_run
+            data:
+              duration: "{{ mins * 60 }}"
+          - action: input_text.set_value
+            target:
+              entity_id: input_text.dlabs_fan_status
+            data:
+              value: "On for {{ mins }} min"
+        else:
+          - action: timer.cancel
+            target:
+              entity_id: timer.dlabs_fan_run
+          - action: input_text.set_value
+            target:
+              entity_id: input_text.dlabs_fan_status
+            data:
+              value: On, no timer
+  dlabs_fan_auto:
+    alias: Homedial fan back to normal
+    icon: mdi:fan-auto
+    mode: queued
+    sequence:
+      - variables:
+          dl: "{{ integration_entities('dlabs_thermostat') | select('match', 'climate[.]') | sort | first | default('') }}"
+          under: "{{ state_attr(dl, 'underlying') or '' }}"
+          fm: "{{ state_attr(under, 'fan_modes') or [] }}"
+          auto_mode: >
+            {% set pick = namespace(v='') %}
+            {% for want in ['auto', 'off'] %}{% if pick.v == '' %}{% for m in fm %}{% if pick.v == '' and m | lower == want %}{% set pick.v = m %}{% endif %}{% endfor %}{% endif %}{% endfor %}
+            {{ pick.v }}
+      - action: timer.cancel
+        target:
+          entity_id: timer.dlabs_fan_run
+      - condition: template
+        value_template: "{{ auto_mode != '' }}"
+      - action: climate.set_fan_mode
+        target:
+          entity_id: "{{ under }}"
+        data:
+          fan_mode: "{{ auto_mode }}"
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.dlabs_fan_status
+        data:
+          value: Runs with heating and cooling
+
+automation:
+  - id: dlabs_auto_heat_cool
+    alias: Homedial picks heat or cool
+    description: Picks COOL or HEAT around the Homedial target. See dlabs_thermostat_extras.yaml.
+    mode: queued
+    max: 3
+    trace:
+      stored_traces: 20
+    triggers:
+      - trigger: state
+        entity_id: input_boolean.dlabs_auto_mode
+        to: "on"
+        id: turned_on
+      # Homedial mode changed (by Auto, or by a person: dashboard, app, voice)
+      - trigger: state
+        entity_id: sensor.dlabs_auto_verdict
+        attribute: dlabs_mode
+        id: mode_changed
+      - trigger: state
+        entity_id: sensor.dlabs_auto_verdict
+        to: [cool, heat]
+        for: "00:10:00"
+        id: steady
+      # re-checks the minimum gap and the working target; only runs when there is something to do
+      - trigger: time_pattern
+        minutes: "/5"
+        id: tick
+    conditions:
+      - condition: state
+        entity_id: input_boolean.dlabs_auto_mode
+        state: "on"
+      - condition: template
+        value_template: >
+          {% set v = states('sensor.dlabs_auto_verdict') %}
+          {% set dl = state_attr('sensor.dlabs_auto_verdict', 'dlabs_entity') or '' %}
+          {{ trigger.id != 'tick' or (v in ['cool', 'heat'] and v != state_attr('sensor.dlabs_auto_verdict', 'dlabs_mode'))
+             or state_attr('sensor.dlabs_auto_verdict', 'ref_heal') in [true, 'True', 'true']
+             or (dl != '' and states(dl) in ['off', 'cool', 'heat'] and state_attr(dl, 'temperature') is none) }}
+    actions:
+      - variables:
+          dl: "{{ state_attr('sensor.dlabs_auto_verdict', 'dlabs_entity') or '' }}"
+          mode: "{{ states(dl) }}"
+          verdict: "{{ states('sensor.dlabs_auto_verdict') }}"
+          expected: "{{ states('input_text.dlabs_auto_expected_mode') }}"
+          urgent: "{{ state_attr('sensor.dlabs_auto_verdict', 'urgent') in [true, 'True', 'true'] }}"
+          ref_heal: "{{ state_attr('sensor.dlabs_auto_verdict', 'ref_heal') in [true, 'True', 'true'] }}"
+          why: "{{ state_attr('sensor.dlabs_auto_verdict', 'explain') | default('', true) | trim }}"
+          steady_s: "{{ (now() - states.sensor.dlabs_auto_verdict.last_changed).total_seconds() if states.sensor.dlabs_auto_verdict else 0 }}"
+          last: "{{ state_attr('input_datetime.dlabs_auto_last_switch', 'timestamp') | float(0) }}"
+          gap_ok: "{{ (now().timestamp() - last) / 60 >= states('input_number.dlabs_auto_min_gap') | float(120) }}"
+          ctemp: "{{ state_attr(dl, 'current_temperature') }}"
+          ttemp: "{{ state_attr(dl, 'temperature') }}"
+          band: "{{ state_attr('sensor.dlabs_auto_verdict', 'band') | float(2) }}"
+          # what the house alone says right now, against the target only (used when Auto turns on)
+          plain: >
+            {% if verdict not in ['cool', 'heat', 'hold'] or ctemp is none or ttemp is none %}{{ verdict }}
+            {% elif ctemp | float >= ttemp | float + band %}cool
+            {% elif ctemp | float <= ttemp | float - band %}heat
+            {% else %}hold{% endif %}
+          under_mode: "{{ states(state_attr(dl, 'underlying') or '') }}"
+          # Homedial's OFF also turns the real thermostat off, so its own last COOL/HEAT is the fallback
+          last_mode: "{{ state_attr(dl, 'last_active_mode') or '' }}"
+      # a queued run must not act after a person turned Auto off
+      - condition: state
+        entity_id: input_boolean.dlabs_auto_mode
+        state: "on"
+      - condition: template
+        value_template: "{{ dl != '' and mode in ['off', 'cool', 'heat'] }}"
+      - choose:
+          # 0) Homedial is loaded but has no target (new, or added again after a removal): Auto can't work
+          #    and must not wait to act on a Homedial nobody set up yet -> auto off, and say why.
+          #    (While Homedial is briefly unavailable, during a restart or reload, mode is not off/cool/heat.)
+          - conditions:
+              - condition: template
+                value_template: "{{ ttemp is none }}"
+            sequence:
+              - action: input_boolean.turn_off
+                target:
+                  entity_id: input_boolean.dlabs_auto_mode
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.dlabs_auto_ref_target
+                data:
+                  value: ""
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.dlabs_auto_expected_mode
+                data:
+                  value: ""
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.dlabs_auto_reason
+                data:
+                  value: "Auto heat/cool is off: Homedial has no target yet."
+          # 1) someone changed the mode by hand (dashboard, app, voice) -> auto off
+          - conditions:
+              - condition: template
+                value_template: "{{ trigger.id != 'turned_on' and expected in ['off', 'cool', 'heat'] and mode != expected }}"
+            sequence:
+              - action: input_boolean.turn_off
+                target:
+                  entity_id: input_boolean.dlabs_auto_mode
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.dlabs_auto_ref_target
+                data:
+                  value: ""
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.dlabs_auto_reason
+                data:
+                  value: "Auto heat/cool is off: the mode was changed by hand to {{ {'cool': 'cooling', 'heat': 'heating'}.get(mode, mode | replace('_', ' ')) }}."
+          # 2) auto just turned on: act now (no 10-minute wait, no gap) on the house and the target as they are
+          - conditions:
+              - condition: trigger
+                id: turned_on
+            sequence:
+              - variables:
+                  pick: >
+                    {% if plain in ['cool', 'heat'] %}{{ plain }}
+                    {% elif plain == 'hold' and mode == 'off' and under_mode in ['cool', 'heat'] %}{{ under_mode }}
+                    {% elif plain == 'hold' and mode == 'off' and last_mode in ['cool', 'heat'] %}{{ last_mode }}
+                    {% elif plain == 'hold' and mode == 'off' and ctemp is not none and ttemp is not none %}{{ 'cool' if ctemp | float >= ttemp | float else 'heat' }}
+                    {% else %}{{ mode }}{% endif %}
+              - if:
+                  - condition: template
+                    value_template: "{{ pick in ['cool', 'heat'] and pick != mode }}"
+                then:
+                  - action: script.dlabs_auto_apply
+                    data:
+                      mode: "{{ pick }}"
+                      why: "{{ why if plain in ['cool', 'heat'] else 'Auto heat/cool turned on.' }}"
+                else:
+                  - action: input_text.set_value
+                    target:
+                      entity_id: input_text.dlabs_auto_expected_mode
+                    data:
+                      value: "{{ mode }}"
+                  - action: input_text.set_value
+                    target:
+                      entity_id: input_text.dlabs_auto_ref_target
+                    data:
+                      value: "{{ ttemp if ttemp is not none else '' }}"
+                  - action: input_text.set_value
+                    target:
+                      entity_id: input_text.dlabs_auto_reason
+                    data:
+                      value: >
+                        {{ ('Auto heat/cool is on and keeping ' ~ {'cool': 'cooling', 'heat': 'heating'}.get(mode, mode | replace('_', ' ')) ~ '. ' ~ why)[:255] if verdict not in ['unsupported', 'blind'] else ('Auto heat/cool is on, but: ' ~ why)[:255] }}
+          # 3) normal operation: the house drifted past the band for 10 minutes
+          - conditions:
+              - condition: template
+                value_template: >
+                  {{ verdict in ['cool', 'heat'] and verdict != mode and steady_s | float >= 600 and (gap_ok or urgent) }}
+            sequence:
+              - action: script.dlabs_auto_apply
+                data:
+                  mode: "{{ verdict }}"
+                  why: "{{ why }}{{ ' (sooner than usual: more than 1° past the switch point)' if urgent and not gap_ok else '' }}"
+          # 4) the house reached the target (or Auto has no working target yet): work to this target now
+          - conditions:
+              - condition: template
+                value_template: "{{ ref_heal and ttemp is not none }}"
+            sequence:
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.dlabs_auto_ref_target
+                data:
+                  value: "{{ ttemp }}"
+
+  - id: dlabs_fan_timer_done
+    alias: Homedial fan timer done
+    description: Hands the fan back to auto when the fan timer runs out, also when it ran out during a restart.
+    mode: queued
+    max: 3
+    triggers:
+      - trigger: event
+        event_type: timer.finished
+        event_data:
+          entity_id: timer.dlabs_fan_run
+        id: finished
+      # the timer can run out while Home Assistant is starting, before this automation listens
+      - trigger: homeassistant
+        event: start
+        id: start
+      - trigger: event
+        event_type: automation_reloaded
+        id: start
+    conditions:
+      - condition: template
+        value_template: >
+          {{ trigger.id == 'finished' or (is_state('timer.dlabs_fan_run', 'idle')
+             and states('input_text.dlabs_fan_status').startswith('On for')) }}
+    actions:
+      - if:
+          - condition: template
+            value_template: "{{ trigger.id == 'start' }}"
+        then:
+          # give a cloud thermostat up to 5 minutes to load its fan modes after a restart
+          - wait_template: >
+              {% set dl = integration_entities('dlabs_thermostat') | select('match', 'climate[.]') | sort | first | default('') %}
+              {{ (state_attr(state_attr(dl, 'underlying') or '', 'fan_modes') or []) | count > 0 }}
+            timeout: "00:05:00"
+      - action: script.dlabs_fan_auto
+
+  - id: dlabs_thermostat_safety_alert
+    alias: Homedial safety alert
+    description: Alert Mode on when a thermostat safety guard trips, back to Normal when it clears. Needs Homedial Backdrop.
+    mode: queued
+    max: 5
+    trace:
+      stored_traces: 20
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.dlabs_safety_guard_blocking
+        to: ["on", "off"]
+        id: guard
+      - trigger: state
+        entity_id: input_select.dlabs_alert_condition
+        not_to: [unknown, unavailable]
+        id: condition_changed
+      - trigger: state
+        entity_id: input_boolean.dlabs_safety_alert_off
+        to: ["on", "off"]
+        id: opt_out
+      # re-check after a restart or reload, and every 5 minutes (only runs when there is something to do)
+      - trigger: homeassistant
+        event: start
+        id: start
+      - trigger: event
+        event_type: automation_reloaded
+        id: start
+      - trigger: time_pattern
+        minutes: "/5"
+        id: tick
+    conditions:
+      # Homedial Backdrop not installed: nothing to do
+      - condition: template
+        value_template: "{{ states('input_select.dlabs_alert_condition') not in ['unknown', 'unavailable'] }}"
+      - condition: template
+        value_template: >
+          {% set blocking = is_state('binary_sensor.dlabs_safety_guard_blocking', 'on') %}
+          {% set ours = is_state('input_boolean.dlabs_alert_by_thermostat', 'on') %}
+          {% set off = is_state('input_boolean.dlabs_safety_alert_off', 'on') %}
+          {{ trigger.id != 'tick'
+             or (blocking and not ours and not off and is_state('input_select.dlabs_alert_condition', 'NORMAL') and is_state('input_boolean.dlabs_alert_dismissed', 'off'))
+             or (ours and (off or is_state('binary_sensor.dlabs_safety_guard_blocking', 'off')))
+             or (is_state('binary_sensor.dlabs_safety_guard_blocking', 'off') and is_state('input_boolean.dlabs_alert_dismissed', 'on'))
+             or (not ours and states('input_text.dlabs_alert_reason').startswith('Thermostat safety guard: ')) }}
+    actions:
+      - variables:
+          dl: "{{ state_attr('binary_sensor.dlabs_safety_guard_blocking', 'dlabs_entity') or '' }}"
+          cond: "{{ states('input_select.dlabs_alert_condition') }}"
+          ours: "{{ is_state('input_boolean.dlabs_alert_by_thermostat', 'on') }}"
+          blocking: "{{ is_state('binary_sensor.dlabs_safety_guard_blocking', 'on') }}"
+          clear: "{{ is_state('binary_sensor.dlabs_safety_guard_blocking', 'off') }}"
+          opted_out: "{{ is_state('input_boolean.dlabs_safety_alert_off', 'on') }}"
+          dismissed: "{{ is_state('input_boolean.dlabs_alert_dismissed', 'on') }}"
+          # the reason helper is cleared only while it still holds the thermostat's text, never yours
+          our_text: "{{ states('input_text.dlabs_alert_reason').startswith('Thermostat safety guard: ') }}"
+          why: >
+            {% set s = state_attr(dl, 'summary') or '' %}
+            {% if s.startswith('Safety guard: ') %}{% set rest = s[14:] %}{% set i = rest.find('Homedial is not ') %}{% set t = rest[:rest.find('.', i) + 1] if i >= 0 else rest %}
+            {% else %}
+              {% set ns = namespace(t=(state_attr(dl, 'reason') or '').split(' | ')[0]) %}
+              {% for e in ns.t | regex_findall('[a-z_]+[.][a-z0-9_]+') %}{% set ns.t = ns.t | replace(e, state_attr(e, 'friendly_name') or e) %}{% endfor %}
+              {% set t = ns.t %}
+            {% endif %}
+            {{ ('Thermostat safety guard: ' ~ t)[:120] }}
+      - choose:
+          # a person moved it off an alert Homedial raised (Normal, or another add-on's state): it's
+          # theirs now, and it stays dismissed until the guard clears
+          - conditions:
+              - condition: template
+                value_template: "{{ ours and cond != 'ALERT' }}"
+            sequence:
+              - action: input_boolean.turn_off
+                target:
+                  entity_id: input_boolean.dlabs_alert_by_thermostat
+              - if:
+                  - condition: template
+                    value_template: "{{ blocking }}"
+                then:
+                  - action: input_boolean.turn_on
+                    target:
+                      entity_id: input_boolean.dlabs_alert_dismissed
+              - if:
+                  - condition: template
+                    value_template: "{{ our_text }}"
+                then:
+                  - action: input_text.set_value
+                    target:
+                      entity_id: input_text.dlabs_alert_reason
+                    data:
+                      value: ""
+          # the guard has been clear for 5 minutes (or alerts were turned off): stand down our alert
+          - conditions:
+              - condition: template
+                value_template: "{{ ours and (clear or opted_out) }}"
+            sequence:
+              - action: input_boolean.turn_off
+                target:
+                  entity_id: input_boolean.dlabs_alert_by_thermostat
+              - action: input_boolean.turn_off
+                target:
+                  entity_id: input_boolean.dlabs_alert_dismissed
+              - if:
+                  - condition: template
+                    value_template: "{{ cond == 'ALERT' }}"
+                then:
+                  - action: input_select.select_option
+                    target:
+                      entity_id: input_select.dlabs_alert_condition
+                    data:
+                      option: NORMAL
+              - if:
+                  - condition: template
+                    value_template: "{{ our_text }}"
+                then:
+                  - action: input_text.set_value
+                    target:
+                      entity_id: input_text.dlabs_alert_reason
+                    data:
+                      value: ""
+          # the guard is blocking for a minute or more and the house is Normal: raise it
+          - conditions:
+              - condition: template
+                value_template: "{{ blocking and not ours and not opted_out and not dismissed and cond == 'NORMAL' }}"
+            sequence:
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.dlabs_alert_reason
+                data:
+                  value: "{{ why | trim }}"
+              - action: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.dlabs_alert_by_thermostat
+              - action: input_select.select_option
+                target:
+                  entity_id: input_select.dlabs_alert_condition
+                data:
+                  option: ALERT
+          # the guard cleared after a person dismissed it: the next trip alerts again
+          - conditions:
+              - condition: template
+                value_template: "{{ clear and dismissed }}"
+            sequence:
+              - action: input_boolean.turn_off
+                target:
+                  entity_id: input_boolean.dlabs_alert_dismissed
+          # a thermostat message with no thermostat alert showing (left from before a reinstall, or
+          # from an older version): clear it, so a manual alert shows its own text. Yours is kept.
+          - conditions:
+              - condition: template
+                value_template: "{{ not ours and our_text }}"
+            sequence:
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.dlabs_alert_reason
+                data:
+                  value: ""

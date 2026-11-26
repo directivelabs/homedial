@@ -1,0 +1,100 @@
+# Homedial Backdrop helpers. Drop into config/packages/ (packages must be enabled), then restart.
+# Creates the 4 helpers the dashboard engine reads. Changing them changes looks only, never automations.
+# Alert condition: NORMAL, or ALERT (a person, or the Homedial safety alert, turns it on).
+# No `initial:` on purpose: HA restores the last value after a restart, so a manual alert stays on
+# until someone clears it, and the chosen theme sticks.
+input_select:
+  dlabs_theme:
+    name: Homedial theme
+    icon: mdi:palette
+    options:
+      - "Directive Labs Navy"
+      - "Holidays"
+      - "Seasons"
+      - "Travel postcards"
+      - "Critters"
+      - "Blue Ridge"
+      - "Cats"
+      - "Homedial Classic"
+      - "Cozy Cabin"
+      - "Daylight"
+      - "Desert"
+      - "Diamond"
+      - "Dogs"
+      - "Directive Labs Calm"
+      - "Directive Labs Dark"
+      - "Directive Labs Light"
+      - "Ember"
+      - "Fan Colors (example)"
+      - "Futuristic"
+      - "Arcade"
+      - "Gridiron"
+      - "Hardwood"
+      - "High Contrast"
+      - "Día de los Muertos"
+      - "Diwali"
+      - "Easter · Spring"
+      - "Eid al-Fitr"
+      - "Father's Day"
+      - "Halloween"
+      - "Hanukkah"
+      - "Holi"
+      - "Fourth of July"
+      - "Labor Day"
+      - "Lunar New Year"
+      - "Mother's Day"
+      - "New Year"
+      - "Memorial & Veterans Day"
+      - "St. Patrick's Day"
+      - "Thanksgiving"
+      - "Valentine's Day"
+      - "Winter Holidays"
+      - "Library"
+      - "Mission Control"
+      - "Nature"
+      - "Ocean"
+      - "Pitch"
+      - "Rink"
+      - "January · Deep Winter"
+      - "February · Frost"
+      - "March · First Thaw"
+      - "April · Spring Rain"
+      - "May · In Bloom"
+      - "June · Long Days"
+      - "July · Summer Nights"
+      - "August · Dog Days"
+      - "September · Early Fall"
+      - "October · Peak Color"
+      - "November · Gathering"
+      - "December · Evergreen"
+      - "Slate"
+      - "Space Adventure"
+      - "Retro Synthwave"
+      - "Tech"
+      - "Postcard · City Nights"
+      - "Postcard · Desert Highway"
+      - "Postcard · Grand Canyon"
+      - "Postcard · Lighthouse Coast"
+      - "Postcard · London"
+      - "Postcard · Mount Fuji"
+      - "Postcard · Mountain Lake"
+      - "Postcard · New York Harbor"
+      - "Postcard · Northern Lights"
+      - "Postcard · Paris"
+      - "Postcard · Tropical Island"
+      - "Postcard · Waterfalls"
+  dlabs_alert_condition:
+    name: Homedial alert condition
+    icon: mdi:alert-octagon
+    options:
+      - NORMAL
+      - ALERT
+input_boolean:
+  dlabs_alert_share:
+    name: Homedial show manual alert to exempt people
+    icon: mdi:account-eye
+input_text:
+  dlabs_alert_reason:
+    name: Homedial alert reason
+    icon: mdi:text
+    max: 120

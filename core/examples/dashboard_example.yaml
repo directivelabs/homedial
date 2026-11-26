@@ -1,0 +1,164 @@
+# Homedial Backdrop example dashboard.
+#
+# REPLACE BEFORE USE: every entity ID that contains "your_" is a placeholder. Swap each one for an
+# entity from your own home (Settings > Devices & services > Entities), or delete the card that uses it.
+# The dlabs_ helpers come from dlabs_core.yaml and work as they are.
+#
+# How to add it:
+#   1. Install Homedial Backdrop (README, Install steps 1 and 2) and button-card from HACS (Marketplace on Home Assistant 2026.11 or newer).
+#   2. Settings > Dashboards > Add dashboard > New dashboard from scratch. Open it.
+#   3. Pencil (Edit) > three dots > Raw configuration editor. Select everything and delete it.
+#   4. Paste this whole file.
+#   5. At the very top, type  button_card_templates:  and a space, then paste the whole contents of
+#      dist/dlabs_core_templates.json on that same line (README, Install step 3). Save.
+# These comments are dropped when you save; that's normal.
+
+views:
+  - title: Home
+    path: home
+    type: sections
+    max_columns: 3
+    sections:
+      - type: grid
+        column_span: 3
+        cards:
+          - type: custom:button-card
+            template: dl_header
+            variables:
+              title: Home
+              sub: "My house · @DATE@"
+            grid_options: {columns: full, rows: auto}
+
+      - type: grid
+        column_span: 2
+        cards:
+          - type: custom:button-card
+            template: dl_thermostat
+            entity: climate.dlabs_thermostat
+            grid_options: {columns: full, rows: auto}
+
+          # Round thermostat gauge. Works with any climate entity, including a Homedial.
+          - type: custom:button-card
+            template: dl_dial
+            entity: climate.your_thermostat              # REPLACE
+            variables:
+              title: Climate
+            grid_options: {columns: full, rows: auto}
+
+          # Status chips. "go: rooms" opens the Rooms page below when tapped.
+          - type: custom:button-card
+            template: dl_status
+            triggers_update:
+              - binary_sensor.your_front_door            # REPLACE
+              - input_select.dlabs_alert_condition
+            variables:
+              title: Status
+              chips:
+                - {n: Front door, e: binary_sensor.your_front_door, map: {"on": Open, "off": Closed}, hot: ["on"], ok: ["off"]}   # REPLACE
+                - {n: Alert, e: input_select.dlabs_alert_condition, hot: [alert], ok: [normal]}
+                - {n: Rooms, v: Open, go: rooms}
+            grid_options: {columns: full, rows: auto}
+
+          # Tap toggles the light; hold opens its details.
+          - type: custom:button-card
+            template: dl_chip_toggle
+            entity: light.your_light                     # REPLACE
+            variables:
+              name: Desk lamp
+            grid_options: {columns: full, rows: auto}
+
+      - type: grid
+        column_span: 1
+        cards:
+          # Up to 6 bars. n = label, e = entity, u = unit, d = decimals, min / max = bar range.
+          - type: custom:button-card
+            template: dl_bars
+            triggers_update:
+              - sensor.your_room_temperature            # REPLACE
+              - sensor.your_humidity                    # REPLACE
+            variables:
+              title: Indoor
+              rows:
+                - {n: Living room, e: sensor.your_room_temperature, u: "°F", min: 40, max: 100}   # REPLACE (and °C if yours)
+                - {n: Humidity, e: sensor.your_humidity, u: "%", d: 0, max: 100}               # REPLACE
+            grid_options: {columns: full, rows: auto}
+
+          # Theme picker and alert reason, as ordinary Home Assistant rows themed by Homedial.
+          - type: custom:button-card
+            template: dl_group
+            variables:
+              title: Look
+            custom_fields:
+              body:
+                card:
+                  type: entities
+                  entities:
+                    - input_select.dlabs_theme
+                    - input_text.dlabs_alert_reason
+            grid_options: {columns: full, rows: auto}
+
+          - type: custom:button-card
+            template: dl_quote
+            grid_options: {columns: full, rows: auto}
+
+      - type: grid
+        column_span: 3
+        cards:
+          # Alert buttons. "on" lights up the button that matches the current state.
+          - type: horizontal-stack
+            cards:
+              - type: custom:button-card
+                template: dl_pill
+                name: Normal
+                entity: input_select.dlabs_alert_condition
+                variables:
+                  "on": "[[[ return entity.state === 'NORMAL'; ]]]"
+                tap_action:
+                  action: perform-action
+                  perform_action: input_select.select_option
+                  target: {entity_id: input_select.dlabs_alert_condition}
+                  data: {option: NORMAL}
+              - type: custom:button-card
+                template: dl_pill
+                name: Alert
+                entity: input_select.dlabs_alert_condition
+                variables:
+                  "on": "[[[ return entity.state === 'ALERT'; ]]]"
+                tap_action:
+                  action: perform-action
+                  perform_action: input_select.select_option
+                  target: {entity_id: input_select.dlabs_alert_condition}
+                  data: {option: ALERT}
+                  confirmation: {text: "Turn on Alert Mode on every Homedial page?"}
+            grid_options: {columns: full, rows: auto}
+
+  - title: Rooms
+    path: rooms
+    type: sections
+    max_columns: 2
+    sections:
+      - type: grid
+        column_span: 2
+        cards:
+          - type: custom:button-card
+            template: dl_header
+            variables:
+              title: Rooms
+              sub: "@DATE@"
+            grid_options: {columns: full, rows: auto}
+          # A panel with your own text. "code" is the small label on the right of the title.
+          - type: custom:button-card
+            template: dl_panel
+            variables:
+              title: Notes
+              code: Example
+            custom_fields:
+              body: "[[[ return \"<div style='font-size:var(--fs-label)'>Put any cards you like on this page.</div>\"; ]]]"
+            grid_options: {columns: full, rows: auto}
+          - type: custom:button-card
+            template: dl_chip
+            entity: sensor.your_room_temperature         # REPLACE
+            variables:
+              name: Living room
+              big: true
+            grid_options: {columns: full, rows: auto}
